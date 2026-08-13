@@ -20,7 +20,7 @@ cd event-booking-system
 
 **2. Napravi praznu PostgreSQL bazu**, npr. `eventbookingsystem`.
 
-**3. Postavi connection string.** Otvori `appsettings.json` i zamijeni `YOUR_PASSWORD_HERE` svojom pravom lozinkom za postgres usera.
+**3. Postavi connection string.** Otvori `appsettings.json` i zamijeni `YOUR_PASSWORD` svojom pravom lozinkom za postgres usera.
 
 **4. Pokreni migracije:**
 
