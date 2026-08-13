@@ -1,0 +1,323 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IEventService EventService
+@inject IJSRuntime JS
+@inject NavigationManager NavigationManager
+@inject EventFilterService FilterService
+@inject AuthenticationStateProvider AuthProvider
+@implements IAsyncDisposable
+
+<div class="page-container">
+    <div class="top-bar">
+        <div class="logo">
+            <span class="logo-icon">📍</span>
+        </div>
+
+        <div class="filters">
+            <select class="filter-select" @onchange="OnEventTypeFilterChanged">
+                <option value="">All Events</option>
+                <option value="Concert">Concert</option>
+                <option value="Hangout">Hangout</option>
+            </select>
+
+            <select class="filter-select" @onchange="OnSortChanged">
+                <option value="Earliest">Earliest</option>
+                <option value="Latest">Latest</option>
+            </select>
+        </div>
+
+        <div class="action-buttons">
+            <AuthorizeView>
+                <Authorized>
+                    <a href="/events/create" class="btn-create">Add your event!</a>
+                    <a href="/account" class="btn-account">Account</a>
+                </Authorized>
+                <NotAuthorized>
+                    <button class="btn-create" @onclick="RedirectToCreateEvent">Add your event!</button>
+                    <button class="btn-account" @onclick="RedirectToAccount">Account</button>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="events-panel">
+            @if (selectedEvent is null)
+            {
+                <div class="event-list-header">
+                    @filteredEvents.Count events within map area
+                </div>
+                <div class="event-list">
+                    @foreach (var ev in filteredEvents)
+                    {
+                        var isBooked = bookedEventIds.Contains(ev.Id);
+                        var placesLeft = PlacesLeft(ev);
+                        <div class="event-card"
+                             @onclick="() => OnEventClick(ev)"
+                             @onmouseenter="() => OnCardHover(ev.Id)"
+                             @onmouseleave="() => OnCardUnhover(ev.Id)">
+                            <div class="event-info">
+                                <h3>@ev.Title</h3>
+                                <p>@ev.StartDate.ToString("dd MMM") – @ev.EndDate.ToString("dd MMM")</p>
+                                <p>@ev.StartTime.ToString("HH:mm") – @ev.EndTime.ToString("HH:mm")</p>
+                                <p>@placesLeft places left</p>
+                            </div>
+                            <div class="event-card-footer">
+                                @if (currentUserId == null)
+                                {
+                                    <button class="btn-book-now" @onclick="() => RedirectToLogin()" @onclick:stopPropagation="true">
+                                        Book Now
+                                    </button>
+                                }
+                                else if (isBooked)
+                                {
+                                    <button class="btn-booked" @onclick="() => Unbook(ev)" @onclick:stopPropagation="true">
+                                        Booked
+                                    </button>
+                                }
+                                else if (placesLeft <= 0)
+                                {
+                                    <button class="btn-book-now btn-disabled" disabled>Full</button>
+                                }
+                                else
+                                {
+                                    <button class="btn-book-now" @onclick="() => BookNow(ev)" @onclick:stopPropagation="true">
+                                        Book Now
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="event-detail">
+                    <button class="back-btn" @onclick="BackToList">&larr; Back to list</button>
+                    <h2>@selectedEvent.Title</h2>
+                    <p>@selectedEvent.Description</p>
+                    <p>@selectedEvent.Address, @selectedEvent.City</p>
+                </div>
+            }
+        </div>
+
+        <div class="map-panel">
+            <div id="map"></div>
+        </div>
+    </div>
+</div>
+
+@code {
+    // State
+    private List<Event> allEvents = new();
+    private List<Event> filteredEvents = new();
+    private string? selectedEventType;
+    private string selectedSort = "Earliest";
+    private Event? selectedEvent;
+    private DotNetObjectReference<Home>? dotNetRef;
+    private bool _mapInitialized = false;
+    private string? currentUserId;
+    private HashSet<int> bookedEventIds = new();
+    private Dictionary<int, int> bookingCounts = new();
+
+    // Lifecycle
+    protected override async Task OnInitializedAsync()
+    {
+        allEvents = await EventService.GetAllAsync();
+        bookingCounts = await EventService.GetBookingCountsAsync();
+
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        currentUserId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (currentUserId != null)
+        {
+            var ids = await EventService.GetBookedEventIdsAsync(currentUserId);
+            bookedEventIds = new HashSet<int>(ids);
+        }
+
+        ApplyFilterAndSort();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("mapInterop.initMap", dotNetRef);
+            _mapInitialized = true;
+            await UpdateMapMarkers();
+        }
+    }
+
+    // Map
+    [JSInvokable]
+    public async Task OnMapClicked()
+    {
+        selectedEvent = null;
+        await JS.InvokeVoidAsync("mapInterop.deselectMarker");
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async Task OnMarkerClicked(int id)
+    {
+        var ev = filteredEvents.FirstOrDefault(e => e.Id == id);
+        if (ev != null)
+        {
+            selectedEvent = ev;
+            await JS.InvokeVoidAsync("mapInterop.selectMarker", ev.Id);
+            await JS.InvokeVoidAsync("mapInterop.focusMarker", ev.Id);
+            StateHasChanged();
+        }
+    }
+
+    private async Task UpdateMapMarkers()
+    {
+        if (!_mapInitialized) return;
+
+        var markersData = filteredEvents.Select(ev => new
+        {
+            id = ev.Id,
+            latitude = ev.Latitude,
+            longitude = ev.Longitude,
+            emoji = ev.EmojiOrImageUrl ?? "📍"
+        }).ToList();
+
+        await JS.InvokeVoidAsync("mapInterop.setMarkers", markersData);
+    }
+
+    // Event handlers
+    private async Task OnEventClick(Event ev)
+    {
+        selectedEvent = ev;
+        await JS.InvokeVoidAsync("mapInterop.selectMarker", ev.Id);
+        await JS.InvokeVoidAsync("mapInterop.focusMarker", ev.Id);
+        StateHasChanged();
+    }
+
+    private async Task OnCardHover(int id)
+    {
+        await JS.InvokeVoidAsync("mapInterop.setMarkerHover", id);
+    }
+
+    private async Task OnCardUnhover(int id)
+    {
+        await JS.InvokeVoidAsync("mapInterop.setMarkerUnhover", id);
+    }
+
+    private async Task BackToList()
+    {
+        selectedEvent = null;
+        await JS.InvokeVoidAsync("mapInterop.deselectMarker");
+        StateHasChanged();
+    }
+
+    // Booking
+    private async Task BookNow(Event ev)
+    {
+        if (currentUserId == null) return;
+        bool success = await EventService.BookEventAsync(ev.Id, currentUserId);
+        if (success)
+        {
+            bookedEventIds.Add(ev.Id);
+            if (bookingCounts.ContainsKey(ev.Id))
+                bookingCounts[ev.Id]++;
+            else
+                bookingCounts[ev.Id] = 1;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Unbook(Event ev)
+    {
+        if (currentUserId == null) return;
+        bool success = await EventService.CancelBookingAsync(ev.Id, currentUserId);
+        if (success)
+        {
+            bookedEventIds.Remove(ev.Id);
+            if (bookingCounts.ContainsKey(ev.Id))
+            {
+                bookingCounts[ev.Id]--;
+                if (bookingCounts[ev.Id] < 0) bookingCounts[ev.Id] = 0;
+            }
+            StateHasChanged();
+        }
+    }
+
+    private int PlacesLeft(Event ev)
+    {
+        int count = bookingCounts.TryGetValue(ev.Id, out var c) ? c : 0;
+        return ev.Capacity - count;
+    }
+
+    // Filters
+    private void OnEventTypeFilterChanged(ChangeEventArgs e)
+    {
+        selectedEventType = e.Value as string;
+        ApplyFilterAndSort();
+    }
+
+    private void OnSortChanged(ChangeEventArgs e)
+    {
+        selectedSort = e.Value as string ?? "Earliest";
+        ApplyFilterAndSort();
+    }
+
+    private void ApplyFilterAndSort()
+    {
+        FilterService.EventTypeFilter = selectedEventType;
+        FilterService.SortOrder = selectedSort;
+
+        filteredEvents = FilterService.ApplyFilterAndSort(allEvents, DateTime.Now).ToList();
+
+        if (_mapInitialized)
+        {
+            _ = UpdateMapMarkers();
+        }
+
+        if (selectedEvent != null && !filteredEvents.Any(e => e.Id == selectedEvent.Id))
+        {
+            selectedEvent = null;
+        }
+
+        StateHasChanged();
+    }
+
+    // Navigation
+    private void RedirectToLogin()
+    {
+        NavigationManager.NavigateTo($"/auth?returnUrl={Uri.EscapeDataString(NavigationManager.Uri)}", forceLoad: true);
+    }
+
+    private void RedirectToCreateEvent()
+    {
+        NavigationManager.NavigateTo("/auth?returnUrl=/events/create", forceLoad: true);
+    }
+
+    private void RedirectToAccount()
+    {
+        NavigationManager.NavigateTo("/auth?returnUrl=/account", forceLoad: true);
+    }
+
+    // Disposal
+    public async ValueTask DisposeAsync()
+    {
+        if (dotNetRef is not null)
+        {
+            dotNetRef.Dispose();
+        }
+
+        if (_mapInitialized)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("mapInterop.destroyMap");
+            }
+            catch
+            {
+                // Ignore
+            }
+        }
+    }
+}

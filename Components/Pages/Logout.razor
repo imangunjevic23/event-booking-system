@@ -1,0 +1,15 @@
+﻿@page "/logout"
+@attribute [AllowAnonymous]
+
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.Http
+@inject SignInManager<AppUser> SignInManager
+@inject IHttpContextAccessor HttpContextAccessor
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        await SignInManager.SignOutAsync();
+        HttpContextAccessor.HttpContext.Response.Redirect("/");
+    }
+}

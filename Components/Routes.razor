@@ -1,0 +1,16 @@
+﻿<CascadingAuthenticationState>
+    <Router AppAssembly="typeof(Program).Assembly">
+        <Found Context="routeData">
+            <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+                <NotAuthorized>
+                    <div class="alert alert-warning">
+                        Please <a href="/auth?returnUrl=/events/create">log in</a> to access this page.
+                    </div>
+                </NotAuthorized>
+            </AuthorizeRouteView>
+        </Found>
+        <NotFound>
+            <p>Sorry, there's nothing here.</p>
+        </NotFound>
+    </Router>
+</CascadingAuthenticationState>

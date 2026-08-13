@@ -1,0 +1,158 @@
+﻿@page "/events/create"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@inject IEventService EventService
+@inject AuthenticationStateProvider AuthProvider
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="create-event-container">
+    <div class="create-event-form">
+        <div class="create-event-header">
+            <button class="back-arrow" @onclick="ReturnHome" title="Back to home">←</button>
+            <h3>Create Event</h3>
+        </div>
+
+        <EditForm Model="newEvent" OnValidSubmit="SaveEvent">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <div class="form-group">
+                <label>Title</label>
+                <InputText @bind-Value="newEvent.Title" placeholder="Event title" />
+            </div>
+
+            <div class="form-group">
+                <label>Description</label>
+                <InputTextArea @bind-Value="newEvent.Description" placeholder="Event description" />
+            </div>
+
+            <div class="form-group">
+                <label>Event Type</label>
+                <InputSelect @bind-Value="newEvent.EventType">
+                    <option value="@EventType.Concert">Concert</option>
+                    <option value="@EventType.Hangout">Hangout</option>
+                </InputSelect>
+            </div>
+
+            <div class="row-group">
+                <div class="form-group">
+                    <label>Start Date</label>
+                    <InputDate @bind-Value="newEvent.StartDate" />
+                </div>
+                <div class="form-group">
+                    <label>End Date</label>
+                    <InputDate @bind-Value="newEvent.EndDate" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Capacity</label>
+                <InputNumber @bind-Value="newEvent.Capacity" />
+            </div>
+
+            <div class="form-group">
+                <label>Emoji or Image URL</label>
+                <InputText @bind-Value="newEvent.EmojiOrImageUrl" placeholder="🎵 or https://example.com/image.jpg" />
+            </div>
+
+            <div class="form-group">
+                <label>Address</label>
+                <InputText @bind-Value="newEvent.Address" placeholder="Street address" />
+            </div>
+
+            <div class="form-group">
+                <label>City</label>
+                <InputText @bind-Value="newEvent.City" placeholder="City" />
+            </div>
+
+            <p>Click the map below to set the location (latitude/longitude).</p>
+            <div id="create-map" class="create-map"></div>
+            <p>
+                Selected location:
+                @if (newEvent.Latitude != 0 || newEvent.Longitude != 0)
+                {
+                    <span>Lat: @newEvent.Latitude.ToString("F6"), Lng: @newEvent.Longitude.ToString("F6")</span>
+                }
+                else
+                {
+                    <span>Not selected yet</span>
+                }
+            </p>
+
+            <button type="submit" class="btn-primary">Save Event</button>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private Event newEvent = new();
+    private DotNetObjectReference<CreateEvent>? dotNetRef;
+    private bool _mapInitialized = false;
+
+    protected override void OnInitialized()
+    {
+        newEvent.StartDate = DateOnly.FromDateTime(DateTime.Today);
+        newEvent.EndDate = DateOnly.FromDateTime(DateTime.Today);
+        newEvent.StartTime = new TimeOnly(10, 0);
+        newEvent.EndTime = new TimeOnly(12, 0);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("mapInterop.initCreateMap", dotNetRef);
+            _mapInitialized = true;
+        }
+    }
+
+    [JSInvokable]
+    public Task OnMapClick(double lat, double lng)
+    {
+        newEvent.Latitude = lat;
+        newEvent.Longitude = lng;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void ReturnHome()
+    {
+        Nav.NavigateTo("/");
+    }
+
+    private async Task SaveEvent()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (userId is null)
+            return;
+
+        await EventService.CreateAsync(newEvent, userId);
+        Nav.NavigateTo("/");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (dotNetRef != null)
+        {
+            dotNetRef.Dispose();
+        }
+
+        if (_mapInitialized)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("mapInterop.destroyCreateMap");
+            }
+            catch
+            {
+                // Ignore
+            }
+        }
+    }
+}

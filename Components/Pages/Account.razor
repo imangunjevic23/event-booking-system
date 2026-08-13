@@ -1,0 +1,127 @@
+﻿@page "/account"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+
+@inject UserManager<AppUser> UserManager
+@inject SignInManager<AppUser> SignInManager
+@inject IEventService EventService
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<div class="account-container">
+    <h2>My Account</h2>
+
+    @if (currentUser is not null)
+    {
+        <div class="account-info">
+            <p><strong>Name:</strong> @currentUser.DisplayName</p>
+            <p><strong>Email:</strong> @currentUser.Email</p>
+            @if (!string.IsNullOrEmpty(currentUser.ProfilePictureUrl))
+            {
+                <img src="@currentUser.ProfilePictureUrl" alt="Profile picture" style="max-width: 150px;" />
+            }
+        </div>
+
+        <div class="account-actions">
+            <button class="btn-primary" @onclick="ReturnHome">Return to Home</button>
+            <button class="btn-logout" @onclick="Logout">Log out</button>
+        </div>
+
+        <h3>My Events</h3>
+        @if (userEvents is null || userEvents.Count == 0)
+        {
+            <p>You haven’t created any events yet.</p>
+        }
+        else
+        {
+            <div class="user-events-list">
+                @foreach (var ev in userEvents)
+                {
+                    <div class="user-event-card">
+                        <h4>@ev.Title</h4>
+                        <p>@ev.StartDate.ToString("dd MMM yyyy") – @ev.EndDate.ToString("dd MMM yyyy")</p>
+                        <p>@ev.StartTime.ToString("HH:mm") – @ev.EndTime.ToString("HH:mm")</p>
+                        <p>@ev.City, @ev.Address</p>
+                    </div>
+                }
+            </div>
+        }
+
+        <h3>My Bookings</h3>
+        @if (bookedEvents is null || bookedEvents.Count == 0)
+        {
+            <p>You haven’t booked any events.</p>
+        }
+        else
+        {
+            <div class="user-events-list">
+                @foreach (var ev in bookedEvents)
+                {
+                    <div class="user-event-card">
+                        <h4>@ev.Title</h4>
+                        <p>@ev.StartDate.ToString("dd MMM yyyy") – @ev.EndDate.ToString("dd MMM yyyy")</p>
+                        <p>@ev.StartTime.ToString("HH:mm") – @ev.EndTime.ToString("HH:mm")</p>
+                        <p>@ev.City, @ev.Address</p>
+                    </div>
+                }
+            </div>
+        }
+
+        <h3>Bookings on My Events</h3>
+        @if (bookingsForCreatedEvents is null || bookingsForCreatedEvents.Count == 0)
+        {
+            <p>No one has booked your events yet.</p>
+        }
+        else
+        {
+            <div class="user-events-list">
+                @foreach (var booking in bookingsForCreatedEvents)
+                {
+                    <div class="user-event-card">
+                        <h4>@booking.Event.Title</h4>
+                        <p>Booked by: @(booking.User?.DisplayName ?? booking.User?.Email ?? "Unknown")</p>
+                        <p>Booked at: @booking.BookedAt.ToString("g")</p>
+                    </div>
+                }
+            </div>
+        }
+    }
+    else
+    {
+        <p>Loading...</p>
+    }
+</div>
+
+@code {
+    private AppUser? currentUser;
+    private List<Event>? userEvents;
+    private List<Event>? bookedEvents;
+    private List<EventBooking>? bookingsForCreatedEvents;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = authState.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (userId is not null)
+        {
+            currentUser = await UserManager.FindByIdAsync(userId);
+            userEvents = await EventService.GetByCreatorIdAsync(userId);
+            bookedEvents = await EventService.GetBookedEventsAsync(userId);
+            bookingsForCreatedEvents = await EventService.GetBookingsForCreatedEventsAsync(userId);
+        }
+    }
+
+    private void ReturnHome()
+    {
+        Nav.NavigateTo("/");
+    }
+
+    private void Logout()
+    {
+        Nav.NavigateTo("/logout", forceLoad: true);
+    }
+}
